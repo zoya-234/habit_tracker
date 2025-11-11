@@ -1,1 +1,5 @@
-{"app_name":"habit_tracker","version":"1.0.0","build_number":"1","package_name":"habit_tracker"}
+{
+  "rewrites": [
+    { "source": "/(.*)", "destination": "/index.html" }
+  ]
+}
