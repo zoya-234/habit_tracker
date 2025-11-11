@@ -1,20 +1,24 @@
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:convert';
-import 'package:uuid/uuid.dart';
-import 'package:habit_tracker/models/habit.dart';
-import 'package:habit_tracker/widgets/habit_card.dart';
+import '../models/habit.dart';
+import '../widgets/habit_card.dart';
 
 class HomeScreen extends StatefulWidget {
+  final VoidCallback? onToggleTheme;
+
+  const HomeScreen({this.onToggleTheme, Key? key}) : super(key: key);
+
   @override
   _HomeScreenState createState() => _HomeScreenState();
 }
 
 class _HomeScreenState extends State<HomeScreen> {
   final String storageKey = 'habits_v1';
+  final GlobalKey<AnimatedListState> _listKey = GlobalKey<AnimatedListState>();
+
   List<Habit> _habits = [];
   bool _loading = true;
-  final GlobalKey<AnimatedListState> _listKey = GlobalKey<AnimatedListState>();
 
   @override
   void initState() {
@@ -22,11 +26,16 @@ class _HomeScreenState extends State<HomeScreen> {
     _loadHabits();
   }
 
+  // ✅ Load habits safely (no animation)
   Future<void> _loadHabits() async {
     final prefs = await SharedPreferences.getInstance();
     final raw = prefs.getStringList(storageKey) ?? [];
+
+    final loaded = raw.map((s) => Habit.fromJson(s)).toList();
+
     setState(() {
-      _habits = raw.map((s) => Habit.fromJson(s)).toList();
+      _habits.clear();
+      _habits.addAll(loaded);
       _loading = false;
     });
   }
@@ -37,26 +46,27 @@ class _HomeScreenState extends State<HomeScreen> {
     await prefs.setStringList(storageKey, raw);
   }
 
+  // ✅ Safe add habit (prevents index errors)
   void _addHabit(Habit habit) {
     setState(() {
       _habits.insert(0, habit);
-      _listKey.currentState
-          ?.insertItem(0, duration: Duration(milliseconds: 420));
     });
+
+    if (_listKey.currentState != null && _listKey.currentState!.mounted) {
+      _listKey.currentState!
+          .insertItem(0, duration: const Duration(milliseconds: 400));
+    }
+
     _saveHabits();
   }
 
-  void _toggleCompleted(String id) async {
-    final i = _habits.indexWhere((h) => h.id == id);
-    if (i < 0) return;
-    setState(() {}); // Rebuilds UI and recalculates Done count
-    await _saveHabits();
-  }
-
+  // ✅ Safe delete habit
   void _deleteHabit(String id) {
     final index = _habits.indexWhere((h) => h.id == id);
-    if (index < 0) return;
+    if (index < 0 || index >= _habits.length) return;
+
     final removed = _habits.removeAt(index);
+
     _listKey.currentState?.removeItem(
       index,
       (context, animation) => SizeTransition(
@@ -71,9 +81,10 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
         ),
       ),
-      duration: Duration(milliseconds: 350),
+      duration: const Duration(milliseconds: 350),
     );
-    _saveHabits();
+
+    Future.delayed(const Duration(milliseconds: 350), _saveHabits);
   }
 
   void _editHabit(Map<String, dynamic> map) {
@@ -87,17 +98,22 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
+  void _toggleCompleted(String id) async {
+    final i = _habits.indexWhere((h) => h.id == id);
+    if (i < 0) return;
+    setState(() {}); // simple rebuild
+    await _saveHabits();
+  }
+
   void _openAddScreen() async {
     final result = await Navigator.pushNamed(context, '/add');
     if (result == null) return;
 
-    // Add / Edit both come back as Map<String, dynamic> (habit.toMap())
     if (result is Map<String, dynamic>) {
       final returnedId = result['id'] as String;
       final exists = _habits.any((h) => h.id == returnedId);
 
       if (exists) {
-        // edit case: replace existing habit
         final edited = Habit.fromMap(result);
         final idx = _habits.indexWhere((h) => h.id == returnedId);
         if (idx >= 0) {
@@ -105,24 +121,11 @@ class _HomeScreenState extends State<HomeScreen> {
         }
         await _saveHabits();
       } else {
-        // new habit: insert at top and animate
         final newHabit = Habit.fromMap(result);
-        setState(() {
-          _habits.insert(0, newHabit);
-          // animate insert if AnimatedList is present
-          _listKey.currentState
-              ?.insertItem(0, duration: Duration(milliseconds: 420));
-        });
-        await _saveHabits();
+        _addHabit(newHabit);
       }
     } else if (result is Habit) {
-      // fallback if Add screen returned a Habit object directly
-      setState(() {
-        _habits.insert(0, result);
-        _listKey.currentState
-            ?.insertItem(0, duration: Duration(milliseconds: 420));
-      });
-      await _saveHabits();
+      _addHabit(result);
     }
   }
 
@@ -133,13 +136,30 @@ class _HomeScreenState extends State<HomeScreen> {
     final total = _habits.length;
     final done = _habits.where((h) => h.streak >= h.goalDays).length;
 
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+
     return Scaffold(
       extendBodyBehindAppBar: true,
       appBar: AppBar(
-        title: Text('Habit Tracker'),
+        title: Text(
+          'HabiTrack',
+          style: TextStyle(
+            fontSize: 22,
+            fontWeight: FontWeight.bold,
+            color: isDark ? Colors.tealAccent : Colors.green.shade900,
+          ),
+        ),
         backgroundColor: Colors.transparent,
         elevation: 0,
         actions: [
+          IconButton(
+            onPressed: widget.onToggleTheme,
+            icon: Icon(
+              isDark ? Icons.wb_sunny_rounded : Icons.nights_stay_rounded,
+              color: isDark ? Colors.tealAccent : Colors.green.shade900,
+            ),
+            tooltip: 'Toggle Dark Mode',
+          ),
           IconButton(
             onPressed: () {
               setState(() {
@@ -147,43 +167,51 @@ class _HomeScreenState extends State<HomeScreen> {
               });
               _saveHabits();
               ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(content: Text('Reset today\'s completions')));
+                const SnackBar(content: Text('Reset today\'s completions')),
+              );
             },
-            icon: Icon(Icons.refresh_rounded, color: Colors.white70),
+            icon: const Icon(Icons.refresh_rounded, color: Colors.white70),
             tooltip: 'Reset Today',
           )
         ],
       ),
       floatingActionButton: FloatingActionButton(
         onPressed: _openAddScreen,
-        child: Icon(Icons.add, size: 28),
+        child: const Icon(Icons.add, size: 28),
       ),
       body: SafeArea(
         child: Column(
           children: [
-            // header (Stack)
+            // Header section
             Stack(
               children: [
                 Container(
                   height: isWide ? 200 : 160,
                   decoration: BoxDecoration(
                     gradient: LinearGradient(
-                        colors: [Colors.green.shade700, Colors.green.shade400]),
-                    borderRadius: BorderRadius.only(
-                        bottomLeft: Radius.circular(28),
-                        bottomRight: Radius.circular(28)),
-                    boxShadow: [
+                      colors: isDark
+                          ? [const Color(0xFF1C2541), const Color(0xFF0B132B)]
+                          : [Colors.green.shade700, Colors.green.shade400],
+                    ),
+                    borderRadius: const BorderRadius.only(
+                      bottomLeft: Radius.circular(28),
+                      bottomRight: Radius.circular(28),
+                    ),
+                    boxShadow: const [
                       BoxShadow(
-                          color: Colors.black26,
-                          blurRadius: 12,
-                          offset: Offset(0, 6))
+                        color: Colors.black26,
+                        blurRadius: 12,
+                        offset: Offset(0, 6),
+                      ),
                     ],
                   ),
                 ),
                 Positioned.fill(
                   child: Padding(
                     padding: EdgeInsets.symmetric(
-                        horizontal: isWide ? 36 : 20, vertical: 18),
+                      horizontal: isWide ? 36 : 20,
+                      vertical: 18,
+                    ),
                     child: Row(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
@@ -191,29 +219,30 @@ class _HomeScreenState extends State<HomeScreen> {
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              SizedBox(height: 6),
-                              Text('Your Daily Habits',
-                                  style: Theme.of(context)
-                                      .textTheme
-                                      .titleLarge
-                                      ?.copyWith(color: Colors.white)),
-                              SizedBox(height: 6),
+                              const SizedBox(height: 6),
                               Text(
-                                  'Small reps, big results — track a habit each day.',
-                                  style: TextStyle(color: Colors.white70)),
-                              SizedBox(height: 10),
-                              // summary chip row inside header
+                                'Your Daily Habits',
+                                style: Theme.of(context)
+                                    .textTheme
+                                    .titleLarge
+                                    ?.copyWith(color: Colors.white),
+                              ),
+                              const SizedBox(height: 6),
+                              const Text(
+                                'Small reps, big results — track a habit each day.',
+                                style: TextStyle(color: Colors.white70),
+                              ),
+                              const SizedBox(height: 10),
                               Row(
                                 children: [
                                   _SummaryChip(label: 'Total', value: '$total'),
-                                  SizedBox(width: 8),
+                                  const SizedBox(width: 8),
                                   _SummaryChip(label: 'Done', value: '$done'),
                                 ],
                               ),
                             ],
                           ),
                         ),
-                        // fancy circular badge
                         Container(
                           width: isWide ? 96 : 72,
                           height: isWide ? 96 : 72,
@@ -228,8 +257,8 @@ class _HomeScreenState extends State<HomeScreen> {
                                 Icon(Icons.local_florist,
                                     color: Colors.white,
                                     size: isWide ? 36 : 28),
-                                SizedBox(height: 4),
-                                Text('Grow',
+                                const SizedBox(height: 4),
+                                const Text('Grow',
                                     style: TextStyle(color: Colors.white70)),
                               ],
                             ),
@@ -242,20 +271,24 @@ class _HomeScreenState extends State<HomeScreen> {
               ],
             ),
 
-            SizedBox(height: 14),
+            const SizedBox(height: 14),
 
-            // main content
+            // Main Habit List
             Expanded(
               child: Padding(
                 padding: EdgeInsets.symmetric(horizontal: isWide ? 36 : 16),
                 child: _loading
-                    ? Center(child: CircularProgressIndicator())
+                    ? const Center(child: CircularProgressIndicator())
                     : _habits.isEmpty
                         ? _EmptyState(onAddTap: _openAddScreen)
                         : AnimatedList(
                             key: _listKey,
                             initialItemCount: _habits.length,
                             itemBuilder: (context, index, animation) {
+                              if (index >= _habits.length) {
+                                return const SizedBox.shrink(); // safety check
+                              }
+
                               final habit = _habits[index];
                               return SizeTransition(
                                 sizeFactor: animation,
@@ -268,10 +301,11 @@ class _HomeScreenState extends State<HomeScreen> {
                                     onToggle: () => _toggleCompleted(habit.id),
                                     onDelete: () => _deleteHabit(habit.id),
                                     onEdit: () async {
-                                      // open add screen in edit mode
                                       final result = await Navigator.pushNamed(
-                                          context, '/add',
-                                          arguments: habit.toMap());
+                                        context,
+                                        '/add',
+                                        arguments: habit.toMap(),
+                                      );
                                       if (result != null &&
                                           result is Map<String, dynamic>) {
                                         _editHabit(result);
@@ -294,22 +328,25 @@ class _HomeScreenState extends State<HomeScreen> {
 class _SummaryChip extends StatelessWidget {
   final String label;
   final String value;
+
   const _SummaryChip({required this.label, required this.value});
+
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
       decoration: BoxDecoration(
         color: Colors.white24,
         borderRadius: BorderRadius.circular(12),
       ),
       child: Row(
         children: [
-          Text(label, style: TextStyle(color: Colors.white70, fontSize: 13)),
-          SizedBox(width: 8),
+          Text(label,
+              style: const TextStyle(color: Colors.white70, fontSize: 13)),
+          const SizedBox(width: 8),
           Text(value,
-              style:
-                  TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+              style: const TextStyle(
+                  color: Colors.white, fontWeight: FontWeight.bold)),
         ],
       ),
     );
@@ -318,10 +355,12 @@ class _SummaryChip extends StatelessWidget {
 
 class _EmptyState extends StatelessWidget {
   final VoidCallback onAddTap;
+
   const _EmptyState({required this.onAddTap});
+
   @override
   Widget build(BuildContext context) {
-    final mq = MediaQuery.of(context);
+    final mq = .of(context);
     return Center(
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
@@ -329,20 +368,20 @@ class _EmptyState extends StatelessWidget {
           Icon(Icons.celebration_rounded,
               size: mq.size.width > 600 ? 96 : 72,
               color: Colors.green.shade300),
-          SizedBox(height: 14),
-          Text('No habits yet',
+          const SizedBox(height: 14),
+          const Text('No habits yet',
               style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600)),
-          SizedBox(height: 8),
+          const SizedBox(height: 8),
           Padding(
-            padding: EdgeInsets.symmetric(horizontal: 36),
+            padding: const EdgeInsets.symmetric(horizontal: 36),
             child: Text('Add a daily habit and watch your streak grow.',
                 textAlign: TextAlign.center,
                 style: TextStyle(color: Colors.grey[700])),
           ),
-          SizedBox(height: 14),
+          const SizedBox(height: 14),
           TextButton(
             onPressed: onAddTap,
-            child: Text('Add your first habit',
+            child: const Text('Add your first habit',
                 style: TextStyle(fontWeight: FontWeight.w600)),
           )
         ],
