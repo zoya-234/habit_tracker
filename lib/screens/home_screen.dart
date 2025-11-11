@@ -4,13 +4,14 @@ import 'dart:convert';
 import 'package:uuid/uuid.dart';
 import 'package:habit_tracker/models/habit.dart';
 import 'package:habit_tracker/widgets/habit_card.dart';
+// import 'package:animated_background/animated_background.dart';
 
 class HomeScreen extends StatefulWidget {
   @override
   _HomeScreenState createState() => _HomeScreenState();
 }
 
-class _HomeScreenState extends State<HomeScreen> {
+class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   final String storageKey = 'habits_v1';
   List<Habit> _habits = [];
   bool _loading = true;
