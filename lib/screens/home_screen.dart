@@ -170,7 +170,8 @@ class _HomeScreenState extends State<HomeScreen> {
                 const SnackBar(content: Text('Reset today\'s completions')),
               );
             },
-            icon: const Icon(Icons.refresh_rounded, color: Colors.white70),
+            icon: const Icon(Icons.refresh_rounded,
+                color: Color.fromARGB(205, 56, 97, 24)),
             tooltip: 'Reset Today',
           )
         ],
