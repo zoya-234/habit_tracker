@@ -270,6 +270,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 ),
               ],
             ),
+//comment to push the code again
 
             const SizedBox(height: 14),
 
@@ -360,7 +361,7 @@ class _EmptyState extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final mq = .of(context);
+    final mq = MediaQuery.of(context);
     return Center(
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
